@@ -71,16 +71,31 @@ def iter_duty_events(svc, cal_id, updated_min=None):
 # ---------------------------------------------------------------------
 # PROCESS ONE DUTY EVENT
 # ---------------------------------------------------------------------
+def parse_event_datetime(raw):
+    if not raw:
+        return None
+
+    # Normalize UTC designator returned by Google ("Z") to RFC3339 compatible
+    # format that `datetime.fromisoformat` understands.
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        # Fall back to the narrower format we expect from Calendar entries.
+        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%S%z")
+
+
 def process_one_duty(svc, dst_cal_id, ev):
     start_raw = ev["start"].get("dateTime")
     end_raw = ev["end"].get("dateTime")
     if not start_raw or not end_raw:
         return
 
-    try:
-        report_dt = datetime.fromisoformat(start_raw)
-    except ValueError:
-        report_dt = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M:%S%z")
+    report_dt = parse_event_datetime(start_raw)
+    if not report_dt:
+        return
 
     # Call commute planner for this report
     print(f"[INFO] Found duty event: {ev.get('summary')} {report_dt}")
