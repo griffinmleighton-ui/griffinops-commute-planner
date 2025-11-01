@@ -76,12 +76,29 @@ def gcal_service():
 
 
 def get_calendar_id(service) -> str:
-    resp = service.calendarList().list().execute()
-    for entry in resp.get("items", []):
-        if entry.get("summary") == CALENDAR_SUMMARY:
-            return entry["id"]
-    created = service.calendars().insert(body={"summary": CALENDAR_SUMMARY}).execute()
-    return created["id"]
+    target = CALENDAR_SUMMARY.strip().lower()
+    page_token: Optional[str] = None
+    seen_names: List[str] = []
+
+    while True:
+        resp = (
+            service.calendarList()
+            .list(pageToken=page_token, maxResults=250)
+            .execute()
+        )
+        for entry in resp.get("items", []):
+            summary = (entry.get("summary") or "").strip()
+            seen_names.append(summary)
+            if summary.lower() == target:
+                return entry["id"]
+
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+
+    raise ValueError(
+        f"Calendar named '{CALENDAR_SUMMARY}' not found. Available calendars: {', '.join(sorted(set(seen_names)))}"
+    )
 
 
 def list_upcoming_duties(service, cal_id) -> List[Tuple[datetime, datetime, str]]:
