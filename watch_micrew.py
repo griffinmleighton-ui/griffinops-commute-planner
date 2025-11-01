@@ -2,6 +2,7 @@ from __future__ import annotations
 import os, sys, time, json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import subprocess
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
@@ -26,6 +27,14 @@ def build_service():
         str(TOKEN_FILE), scopes=scopes
     )
     return build("calendar", "v3", credentials=creds)
+
+
+def ensure_required_files():
+    missing = [str(path) for path in (TOKEN_FILE, CLIENT_SECRET) if not path.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Required credential files are missing: " + ", ".join(missing)
+        )
 
 # ---------------------------------------------------------------------
 # STATE MANAGEMENT
@@ -99,12 +108,25 @@ def process_one_duty(svc, dst_cal_id, ev):
 
     # Call commute planner for this report
     print(f"[INFO] Found duty event: {ev.get('summary')} {report_dt}")
-    os.system(f"python {BASE_DIR}/commute_planner_fa_quota.py")
+    planner = BASE_DIR / "commute_planner_fa_quota.py"
+    if not planner.exists():
+        print(f"[WARN] Commute planner script not found at {planner}")
+        return
+
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env["WATCH_MICREW_EVENT_ID"] = ev.get("id", "")
+
+    try:
+        subprocess.run([sys.executable, str(planner)], check=True, env=env)
+    except subprocess.CalledProcessError as exc:
+        print(f"[ERROR] Commute planner failed with exit code {exc.returncode}")
 
 # ---------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------
 def main():
+    ensure_required_files()
     state = load_state()
     updated_min_iso = state.get("updatedMin")
     svc = build_service()
