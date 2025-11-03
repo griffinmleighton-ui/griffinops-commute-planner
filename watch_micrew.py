@@ -2,6 +2,7 @@ from __future__ import annotations
 import os, sys, time, json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import subprocess
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
@@ -26,6 +27,14 @@ def build_service():
         str(TOKEN_FILE), scopes=scopes
     )
     return build("calendar", "v3", credentials=creds)
+
+
+def ensure_required_files():
+    missing = [str(path) for path in (TOKEN_FILE, CLIENT_SECRET) if not path.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Required credential files are missing: " + ", ".join(missing)
+        )
 
 # ---------------------------------------------------------------------
 # STATE MANAGEMENT
@@ -71,25 +80,53 @@ def iter_duty_events(svc, cal_id, updated_min=None):
 # ---------------------------------------------------------------------
 # PROCESS ONE DUTY EVENT
 # ---------------------------------------------------------------------
+def parse_event_datetime(raw):
+    if not raw:
+        return None
+
+    # Normalize UTC designator returned by Google ("Z") to RFC3339 compatible
+    # format that `datetime.fromisoformat` understands.
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        # Fall back to the narrower format we expect from Calendar entries.
+        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%S%z")
+
+
 def process_one_duty(svc, dst_cal_id, ev):
     start_raw = ev["start"].get("dateTime")
     end_raw = ev["end"].get("dateTime")
     if not start_raw or not end_raw:
         return
 
-    try:
-        report_dt = datetime.fromisoformat(start_raw)
-    except ValueError:
-        report_dt = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M:%S%z")
+    report_dt = parse_event_datetime(start_raw)
+    if not report_dt:
+        return
 
     # Call commute planner for this report
     print(f"[INFO] Found duty event: {ev.get('summary')} {report_dt}")
-    os.system(f"python {BASE_DIR}/commute_planner_fa_quota.py")
+    planner = BASE_DIR / "commute_planner_fa_quota.py"
+    if not planner.exists():
+        print(f"[WARN] Commute planner script not found at {planner}")
+        return
+
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env["WATCH_MICREW_EVENT_ID"] = ev.get("id", "")
+
+    try:
+        subprocess.run([sys.executable, str(planner)], check=True, env=env)
+    except subprocess.CalledProcessError as exc:
+        print(f"[ERROR] Commute planner failed with exit code {exc.returncode}")
 
 # ---------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------
 def main():
+    ensure_required_files()
     state = load_state()
     updated_min_iso = state.get("updatedMin")
     svc = build_service()
