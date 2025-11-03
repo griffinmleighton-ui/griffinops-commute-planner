@@ -280,10 +280,15 @@ def fetch_from_csv(dep_iata: str, arr_iata: str, flight_day: date) -> List[Dict[
 
             dep_dt = _parse_local_datetime(row["date"], dep_time)
             arr_dt = _parse_local_datetime(row["date"], arr_time)
+            carrier = (row.get("carrier") or "").strip()
+            number = (row.get("flight_no") or "").strip()
+            ident = (row.get("flight_ident") or f"{carrier}{number}").strip()
+
             results.append(
                 {
-                    "carrier": row.get("carrier", ""),
-                    "flight_no": row.get("flight_no", ""),
+                    "carrier": carrier,
+                    "flight_no": number,
+                    "flight_ident": ident or None,
                     "dep_airport": dep_iata,
                     "arr_airport": arr_iata,
                     "dep_dt": dep_dt,
@@ -378,10 +383,12 @@ def fetch_from_flightaware(dep_iata: str, arr_iata: str, flight_day: date, *, ma
                 continue
 
             carrier, flight_no = _extract_flight_identity(entry)
+            ident = entry.get("ident") or (carrier + flight_no)
             flights.append(
                 {
                     "carrier": carrier,
                     "flight_no": flight_no,
+                    "flight_ident": ident,
                     "dep_airport": dep_iata,
                     "arr_airport": arr_iata,
                     "dep_dt": dep_dt,
@@ -531,7 +538,9 @@ def pick_outbound(release_dt: datetime) -> List[Dict[str, object]]:
 # CALENDAR UPDATES
 # ---------------------------------------------------------------------------
 def upsert_commute(service, cal_id: str, base_uid: str, pick: Dict[str, object], direction: str, anchor_dt: datetime) -> None:
-    title = f"{COMMUTE_PREFIX}: {pick['carrier']}{pick['flight_no']} {pick['dep_airport']}-{pick['arr_airport']}"
+    ident = (pick.get("flight_ident") or f"{pick.get('carrier', '')}{pick.get('flight_no', '')}").strip()
+    title_ident = ident or pick.get("carrier") or ""
+    title = f"{COMMUTE_PREFIX}: {title_ident} {pick['dep_airport']}-{pick['arr_airport']}"
 
     if direction == "IN":
         buffer_minutes = _minutes_between(anchor_dt.astimezone(ET_LOCAL), pick["arr_dt"])
