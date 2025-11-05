@@ -1,4 +1,3 @@
-from __future__ import annotations
 import os, sys, time, json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -71,16 +70,40 @@ def iter_duty_events(svc, cal_id, updated_min=None):
 # ---------------------------------------------------------------------
 # PROCESS ONE DUTY EVENT
 # ---------------------------------------------------------------------
+def _parse_dt(dt_str):
+    """Best-effort ISO8601 parser that works on older Python versions."""
+    if not dt_str:
+        return None
+
+    # Python 3.7+ exposes datetime.fromisoformat; fall back otherwise.
+    fromiso = getattr(datetime, "fromisoformat", None)
+    if fromiso:
+        try:
+            return fromiso(dt_str)
+        except ValueError:
+            pass
+
+    # Try the most common RFC3339 layouts emitted by Google Calendar.
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+    ):
+        try:
+            return datetime.strptime(dt_str, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognized datetime format: {dt_str}")
+
+
 def process_one_duty(svc, dst_cal_id, ev):
     start_raw = ev["start"].get("dateTime")
     end_raw = ev["end"].get("dateTime")
     if not start_raw or not end_raw:
         return
 
-    try:
-        report_dt = datetime.fromisoformat(start_raw)
-    except ValueError:
-        report_dt = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M:%S%z")
+    report_dt = _parse_dt(start_raw)
 
     # Call commute planner for this report
     print(f"[INFO] Found duty event: {ev.get('summary')} {report_dt}")
